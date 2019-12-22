@@ -343,6 +343,7 @@ SRC_C = \
 	esp32_partition.c \
 	esp32_rmt.c \
 	esp32_ulp.c \
+	esp32_ledcontrol.c \
 	modesp32.c \
 	espneopixel.c \
 	machine_hw_spi.c \
