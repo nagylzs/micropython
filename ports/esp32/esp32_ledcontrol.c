@@ -123,33 +123,45 @@ STATIC mp_obj_t esp32_ledcontrol_deinit(mp_obj_t self_in)
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(esp32_ledcontrol_deinit_obj, esp32_ledcontrol_deinit);
 
-STATIC mp_obj_t esp32_ledcontrol_set_channel(mp_obj_t self_in, mp_obj_t channel_obj, mp_obj_t pin)
+STATIC mp_obj_t esp32_ledcontrol_set_channel_helper(const mp_obj_t self_in, size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
 {
+    static const mp_arg_t allowed_args[] = {
+        {MP_QSTR_channel, MP_ARG_INT | MP_ARG_REQUIRED, {}}, // legacy
+        {MP_QSTR_pin, MP_ARG_OBJ | MP_ARG_REQUIRED, {}},
+        {MP_QSTR_duty, MP_ARG_INT, {.u_int = 0}}};
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
+
     _esp32_ledcontrol_obj_t *self = MP_OBJ_TO_PTR(self_in);
-    ledc_channel_t channel = mp_obj_get_int(channel_obj);
+    ledc_channel_t channel = args[0].u_int;
     if (channel < 0 || channel > LEDC_CHANNEL_MAX)
     {
         mp_raise_ValueError("invalid channel");
     }
-    gpio_num_t pin_num = machine_pin_get_id(pin);
+    gpio_num_t pin_num = machine_pin_get_id(args[1].u_obj);
+    u_int duty = args[2].u_int;
     self->pins[channel] = pin_num;
-    self->duties[channel] = 0;
+    self->duties[channel] = duty;
     ledc_channel_config_t ledc_channel = {
         .gpio_num = pin_num,                /*!< the LEDC output gpio_num, if you want to use gpio16, gpio_num = 16 */
         .speed_mode = LEDC_HIGH_SPEED_MODE, /*!< LEDC speed speed_mode, high-speed mode or low-speed mode */
         .channel = channel,                 /*!< LEDC channel (0 - 7) */
         .intr_type = LEDC_INTR_DISABLE,     /*!< configure interrupt, Fade interrupt enable  or Fade interrupt disable */
         .timer_sel = self->timer_num,       /*!< Select the timer source of channel (0 - 3) */
-        .duty = 0,                          /*!< LEDC channel duty, the range of duty setting is [0, (2**duty_resolution)] */
-        .hpoint = 0
-    };
+        .duty = duty,                       /*!< LEDC channel duty, the range of duty setting is [0, (2**duty_resolution)] */
+        .hpoint = 0};
     check_esp_err(ledc_channel_config(&ledc_channel));
     return mp_const_none;
 }
 
-STATIC MP_DEFINE_CONST_FUN_OBJ_3(esp32_ledcontrol_set_channel_obj, esp32_ledcontrol_set_channel);
+STATIC mp_obj_t esp32_ledcontrol_set_channel(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+    return esp32_ledcontrol_set_channel_helper(MP_OBJ_TO_PTR(args[0]), n_args - 1, args + 1, kw_args);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(esp32_ledcontrol_set_channel_obj, 3, esp32_ledcontrol_set_channel);
 
-STATIC mp_obj_t esp32_ledcontrol_set_duty(mp_obj_t self_in, mp_obj_t channel_obj, mp_obj_t duty_obj) {
+STATIC mp_obj_t esp32_ledcontrol_set_duty(mp_obj_t self_in, mp_obj_t channel_obj, mp_obj_t duty_obj)
+{
     _esp32_ledcontrol_obj_t *self = MP_OBJ_TO_PTR(self_in);
     ledc_channel_t channel = mp_obj_get_int(channel_obj);
     if (channel < 0 || channel > LEDC_CHANNEL_MAX)
@@ -158,15 +170,52 @@ STATIC mp_obj_t esp32_ledcontrol_set_duty(mp_obj_t self_in, mp_obj_t channel_obj
     }
     u_int duty = mp_obj_get_int(duty_obj);
     gpio_num_t pin_num = self->pins[channel];
-    if (pin_num == -1) {
+    if (pin_num == -1)
+    {
         mp_raise_ValueError("unconfigured channel");
     }
     check_esp_err(ledc_set_duty(LEDC_HIGH_SPEED_MODE, channel, duty));
+    self->duties[channel] = duty;
     check_esp_err(ledc_update_duty(LEDC_HIGH_SPEED_MODE, channel));
     return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_3(esp32_ledcontrol_set_duty_obj, esp32_ledcontrol_set_duty);
 
+STATIC mp_obj_t esp32_ledcontrol_fade_with_time_helper(const mp_obj_t self_in, size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
+{
+    static const mp_arg_t allowed_args[] = {
+        {MP_QSTR_channel, MP_ARG_INT | MP_ARG_REQUIRED, {}}, // legacy
+        {MP_QSTR_duty, MP_ARG_INT, {.u_int = 0}},
+        {MP_QSTR_time, MP_ARG_INT, {.u_int = 0}}};
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
+
+    _esp32_ledcontrol_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    ledc_channel_t channel = args[0].u_int;
+    if (channel < 0 || channel > LEDC_CHANNEL_MAX)
+    {
+        mp_raise_ValueError("invalid channel");
+    }
+    u_int duty = args[1].u_int;
+    u_int time_ms = args[2].u_int;
+    check_esp_err(ledc_set_fade_with_time(
+        LEDC_HIGH_SPEED_MODE,
+        channel,
+        duty,
+        time_ms));
+    self->duties[channel] = duty;
+    check_esp_err(ledc_fade_start(
+        LEDC_HIGH_SPEED_MODE,
+        channel,
+        LEDC_FADE_NO_WAIT));
+    return mp_const_none;
+}
+
+STATIC mp_obj_t esp32_ledcontrol_fade_with_time(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+    return esp32_ledcontrol_fade_with_time_helper(MP_OBJ_TO_PTR(args[0]), n_args - 1, args + 1, kw_args);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(esp32_ledcontrol_fade_with_time_obj, 4, esp32_ledcontrol_fade_with_time);
 
 // Return the timer number
 STATIC mp_obj_t esp32_ledcontrol_timer_num(mp_obj_t self_in)
@@ -202,7 +251,7 @@ STATIC const mp_rom_map_elem_t esp32_ledcontrol_locals_dict_table[] = {
 
     {MP_ROM_QSTR(MP_QSTR_set_channel), MP_ROM_PTR(&esp32_ledcontrol_set_channel_obj)},
     {MP_ROM_QSTR(MP_QSTR_set_duty), MP_ROM_PTR(&esp32_ledcontrol_set_duty_obj)},
-
+    {MP_ROM_QSTR(MP_QSTR_fade_with_time), MP_ROM_PTR(&esp32_ledcontrol_fade_with_time_obj)},
 };
 
 STATIC MP_DEFINE_CONST_DICT(esp32_ledcontrol_locals_dict, esp32_ledcontrol_locals_dict_table);
